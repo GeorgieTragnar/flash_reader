@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flash Reader</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d0d0d;
+    --surface: #161616;
+    --border: #2a2a2a;
+    --accent: #e8ff47;
+    --text: #f0f0f0;
+    --muted: #555;
+    --red: #ff4040;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+  }
+
+  h1 {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 1.1rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 3rem;
+  }
+
+  /* Drop zone */
+  #dropzone {
+    width: 100%;
+    max-width: 500px;
+    border: 2px dashed var(--border);
+    border-radius: 4px;
+    padding: 3rem 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+  }
+  #dropzone:hover, #dropzone.drag-over {
+    border-color: var(--accent);
+    background: rgba(232,255,71,0.04);
+  }
+  #dropzone svg { opacity: 0.3; }
+  #dropzone p { color: var(--muted); font-size: 0.8rem; }
+  #dropzone strong { color: var(--accent); }
+  #file-input { display: none; }
+
+  /* Reader */
+  #reader { display: none; width: 100%; max-width: 700px; flex-direction: column; align-items: center; gap: 2rem; }
+
+  /* Word display */
+  #word-wrap {
+    width: 100%;
+    height: 140px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+  /* ORP guide lines */
+  #word-wrap::before {
+    content: '';
+    position: absolute;
+    top: 0; bottom: 0;
+    left: 50%;
+    width: 1px;
+    background: var(--border);
+    transform: translateX(-50%);
+  }
+  #word-display {
+    font-family: 'Syne', sans-serif;
+    font-size: 3.5rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-align: center;
+    transition: opacity 0.05s;
+    white-space: nowrap;
+    user-select: none;
+  }
+  #word-display .orp { color: var(--red); }
+
+  /* Progress */
+  #progress-bar-wrap {
+    width: 100%;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    cursor: pointer;
+    position: relative;
+  }
+  #progress-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.1s linear;
+    pointer-events: none;
+  }
+  #progress-label { font-size: 0.7rem; color: var(--muted); align-self: flex-end; }
+
+  /* Controls */
+  #controls { display: flex; align-items: center; gap: 1.5rem; }
+
+  button {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    padding: 0.5rem 1.2rem;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+    letter-spacing: 0.05em;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  #play-btn {
+    border-color: var(--accent);
+    color: var(--bg);
+    background: var(--accent);
+    font-weight: 700;
+    padding: 0.5rem 2rem;
+  }
+  #play-btn:hover { background: #d4eb30; border-color: #d4eb30; }
+
+  /* WPM */
+  #wpm-wrap { display: flex; align-items: center; gap: 0.75rem; font-size: 0.75rem; color: var(--muted); }
+  #wpm-wrap input[type=range] {
+    -webkit-appearance: none;
+    width: 120px;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  }
+  #wpm-wrap input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+  }
+  #wpm-val { color: var(--accent); min-width: 2.5rem; text-align: right; }
+
+  /* File info */
+  #file-info { font-size: 0.7rem; color: var(--muted); display: flex; gap: 1rem; }
+  #file-info span { color: var(--text); }
+
+  #new-file-btn { font-size: 0.7rem; color: var(--muted); border-color: var(--border); }
+</style>
+</head>
+<body>
+
+<h1>Flash Reader</h1>
+
+<div id="dropzone">
+  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+    <polyline points="14 2 14 8 20 8"/>
+    <line x1="12" y1="18" x2="12" y2="12"/>
+    <line x1="9" y1="15" x2="15" y2="15"/>
+  </svg>
+  <p>Drop a <strong>PDF</strong> here or <strong>click to browse</strong></p>
+  <p>Processed entirely in your browser — nothing uploaded</p>
+  <input type="file" id="file-input" accept=".pdf">
+</div>
+
+<div id="reader">
+  <div id="file-info">filename: <span id="fname">—</span> &nbsp;|&nbsp; words: <span id="wcount">—</span></div>
+
+  <div id="word-wrap">
+    <div id="word-display">—</div>
+  </div>
+
+  <div id="progress-bar-wrap" id="prog-wrap">
+    <div id="progress-bar" style="width:0%"></div>
+  </div>
+  <div id="progress-label">0 / 0</div>
+
+  <div id="controls">
+    <button id="back-btn">⏮ back</button>
+    <button id="play-btn">▶ play</button>
+    <button id="fwd-btn">fwd ⏭</button>
+  </div>
+
+  <div id="wpm-wrap">
+    wpm
+    <input type="range" id="wpm-slider" min="100" max="800" value="300" step="10">
+    <span id="wpm-val">300</span>
+  </div>
+
+  <button id="new-file-btn">load new pdf</button>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('file-input');
+const readerEl = document.getElementById('reader');
+const wordDisplay = document.getElementById('word-display');
+const progressBar = document.getElementById('progress-bar');
+const progressLabel = document.getElementById('progress-label');
+const playBtn = document.getElementById('play-btn');
+const backBtn = document.getElementById('back-btn');
+const fwdBtn = document.getElementById('fwd-btn');
+const wpmSlider = document.getElementById('wpm-slider');
+const wpmVal = document.getElementById('wpm-val');
+const fnameEl = document.getElementById('fname');
+const wcountEl = document.getElementById('wcount');
+const newFileBtn = document.getElementById('new-file-btn');
+const progWrap = document.getElementById('progress-bar-wrap');
+
+let words = [];
+let idx = 0;
+let playing = false;
+let timer = null;
+let wpm = 300;
+
+// ORP (Optimal Recognition Point) highlight — roughly 30% into word
+function renderWord(word) {
+  if (!word) { wordDisplay.textContent = '—'; return; }
+  const orpPos = Math.max(0, Math.floor(word.length * 0.3));
+  const before = word.slice(0, orpPos);
+  const orp = word[orpPos];
+  const after = word.slice(orpPos + 1);
+  wordDisplay.innerHTML =
+    (before ? `<span>${before}</span>` : '') +
+    (orp ? `<span class="orp">${orp}</span>` : '') +
+    (after ? `<span>${after}</span>` : '');
+}
+
+function updateProgress() {
+  const pct = words.length > 1 ? (idx / (words.length - 1)) * 100 : 0;
+  progressBar.style.width = pct + '%';
+  progressLabel.textContent = `${idx + 1} / ${words.length}`;
+}
+
+function step() {
+  if (idx >= words.length) { stop(); return; }
+  renderWord(words[idx]);
+  updateProgress();
+  // Pause longer on punctuation
+  const w = words[idx];
+  const hasPause = /[.!?;]$/.test(w);
+  const delay = Math.round(60000 / wpm) * (hasPause ? 2.2 : 1);
+  idx++;
+  timer = setTimeout(step, delay);
+}
+
+function play() {
+  if (idx >= words.length) idx = 0;
+  playing = true;
+  playBtn.textContent = '⏸ pause';
+  step();
+}
+
+function stop() {
+  playing = false;
+  clearTimeout(timer);
+  playBtn.textContent = '▶ play';
+}
+
+playBtn.addEventListener('click', () => playing ? stop() : play());
+
+backBtn.addEventListener('click', () => {
+  stop();
+  idx = Math.max(0, idx - 15);
+  renderWord(words[idx]);
+  updateProgress();
+});
+
+fwdBtn.addEventListener('click', () => {
+  stop();
+  idx = Math.min(words.length - 1, idx + 15);
+  renderWord(words[idx]);
+  updateProgress();
+});
+
+wpmSlider.addEventListener('input', () => {
+  wpm = parseInt(wpmSlider.value);
+  wpmVal.textContent = wpm;
+});
+
+progWrap.addEventListener('click', (e) => {
+  const rect = progWrap.getBoundingClientRect();
+  const pct = (e.clientX - rect.left) / rect.width;
+  stop();
+  idx = Math.floor(pct * words.length);
+  renderWord(words[idx]);
+  updateProgress();
+});
+
+async function loadPDF(file) {
+  fnameEl.textContent = file.name;
+  wordDisplay.textContent = 'loading…';
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let text = '';
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    text += content.items.map(i => i.str).join(' ') + ' ';
+  }
+  words = text.split(/\s+/).filter(w => w.length > 0);
+  idx = 0;
+  wcountEl.textContent = words.length.toLocaleString();
+  renderWord(words[0]);
+  updateProgress();
+  dropzone.style.display = 'none';
+  readerEl.style.display = 'flex';
+}
+
+dropzone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) loadPDF(fileInput.files[0]);
+});
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type === 'application/pdf') loadPDF(f);
+});
+
+newFileBtn.addEventListener('click', () => {
+  stop();
+  words = []; idx = 0;
+  readerEl.style.display = 'none';
+  dropzone.style.display = 'flex';
+  fileInput.value = '';
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (!words.length) return;
+  if (e.code === 'Space') { e.preventDefault(); playing ? stop() : play(); }
+  if (e.code === 'ArrowLeft') backBtn.click();
+  if (e.code === 'ArrowRight') fwdBtn.click();
+  if (e.code === 'ArrowUp') { wpmSlider.value = Math.min(800, wpm + 50); wpmSlider.dispatchEvent(new Event('input')); }
+  if (e.code === 'ArrowDown') { wpmSlider.value = Math.max(100, wpm - 50); wpmSlider.dispatchEvent(new Event('input')); }
+});
+</script>
+</body>
+</html>
