@@ -165,6 +165,31 @@
   }
   #wpm-val { color: var(--accent); min-width: 2.5rem; text-align: right; }
 
+  #jump-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  #jump-wrap label { display: flex; align-items: center; gap: 0.4rem; }
+  #jump-wrap input[type=number] {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    padding: 0.3rem 0.5rem;
+    border-radius: 2px;
+    width: 7rem;
+    outline: none;
+    -moz-appearance: textfield;
+  }
+  #jump-wrap input[type=number]::-webkit-outer-spin-button,
+  #jump-wrap input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+  #jump-wrap input[type=number]:focus { border-color: var(--accent); }
+  #jump-btn { padding: 0.3rem 1rem; }
+
   /* File info */
   #file-info { font-size: 0.7rem; color: var(--muted); display: flex; gap: 1rem; }
   #file-info span { color: var(--text); }
@@ -189,7 +214,7 @@
 </div>
 
 <div id="reader">
-  <div id="file-info">filename: <span id="fname">—</span> &nbsp;|&nbsp; words: <span id="wcount">—</span></div>
+  <div id="file-info">filename: <span id="fname">—</span> &nbsp;|&nbsp; words: <span id="wcount">—</span> &nbsp;|&nbsp; pages: <span id="pcount">—</span></div>
 
   <div id="word-wrap">
     <div id="word-display">—</div>
@@ -204,6 +229,12 @@
     <button id="back-btn">⏮ back</button>
     <button id="play-btn">▶ play</button>
     <button id="fwd-btn">fwd ⏭</button>
+  </div>
+
+  <div id="jump-wrap">
+    <label>word <input type="number" id="jump-word" min="1" placeholder="e.g. 42000"></label>
+    <label>page <input type="number" id="jump-page" min="1" placeholder="e.g. 12"></label>
+    <button id="jump-btn">go</button>
   </div>
 
   <div id="wpm-wrap">
@@ -236,6 +267,7 @@ const newFileBtn = document.getElementById('new-file-btn');
 const progWrap = document.getElementById('progress-bar-wrap');
 
 let words = [];
+let pageStarts = []; // pageStarts[i] = word index where page i+1 begins
 let idx = 0;
 let playing = false;
 let timer = null;
@@ -254,10 +286,21 @@ function renderWord(word) {
     (after ? `<span>${after}</span>` : '');
 }
 
+function currentPage() {
+  // binary search pageStarts for current idx
+  let lo = 0, hi = pageStarts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (pageStarts[mid] <= idx) lo = mid; else hi = mid - 1;
+  }
+  return lo + 1;
+}
+
 function updateProgress() {
   const pct = words.length > 1 ? (idx / (words.length - 1)) * 100 : 0;
   progressBar.style.width = pct + '%';
-  progressLabel.textContent = `${idx + 1} / ${words.length}`;
+  const pg = pageStarts.length ? ` · p${currentPage()}` : '';
+  progressLabel.textContent = `${idx + 1} / ${words.length}${pg}`;
 }
 
 function step() {
@@ -301,6 +344,36 @@ fwdBtn.addEventListener('click', () => {
   updateProgress();
 });
 
+const jumpWordEl = document.getElementById('jump-word');
+const jumpPageEl = document.getElementById('jump-page');
+const jumpBtn = document.getElementById('jump-btn');
+const pcountEl = document.getElementById('pcount');
+
+function jumpTo(newIdx) {
+  stop();
+  idx = Math.max(0, Math.min(words.length - 1, newIdx));
+  renderWord(words[idx]);
+  updateProgress();
+}
+
+jumpBtn.addEventListener('click', () => {
+  const wVal = parseInt(jumpWordEl.value);
+  const pVal = parseInt(jumpPageEl.value);
+  if (!isNaN(wVal) && jumpWordEl.value.trim()) {
+    jumpTo(wVal - 1); // user enters 1-based
+  } else if (!isNaN(pVal) && jumpPageEl.value.trim()) {
+    const pageIdx = Math.max(1, Math.min(pageStarts.length, pVal)) - 1;
+    jumpTo(pageStarts[pageIdx] || 0);
+  }
+  jumpWordEl.value = '';
+  jumpPageEl.value = '';
+});
+
+// pressing Enter in either jump input triggers go
+[jumpWordEl, jumpPageEl].forEach(el => el.addEventListener('keydown', e => {
+  if (e.key === 'Enter') jumpBtn.click();
+}));
+
 wpmSlider.addEventListener('input', () => {
   wpm = parseInt(wpmSlider.value);
   wpmVal.textContent = wpm;
@@ -320,15 +393,21 @@ async function loadPDF(file) {
   wordDisplay.textContent = 'loading…';
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-  let text = '';
+  words = [];
+  pageStarts = [];
   for (let p = 1; p <= pdf.numPages; p++) {
+    pageStarts.push(words.length);
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
-    text += content.items.map(i => i.str).join(' ') + ' ';
+    const pageText = content.items.map(i => i.str).join(' ');
+    const pageWords = pageText.split(/\s+/).filter(w => w.length > 0);
+    words.push(...pageWords);
   }
-  words = text.split(/\s+/).filter(w => w.length > 0);
   idx = 0;
   wcountEl.textContent = words.length.toLocaleString();
+  pcountEl.textContent = pdf.numPages;
+  document.getElementById('jump-page').max = pdf.numPages;
+  document.getElementById('jump-word').max = words.length;
   renderWord(words[0]);
   updateProgress();
   dropzone.style.display = 'none';
@@ -350,7 +429,7 @@ dropzone.addEventListener('drop', e => {
 
 newFileBtn.addEventListener('click', () => {
   stop();
-  words = []; idx = 0;
+  words = []; pageStarts = []; idx = 0;
   readerEl.style.display = 'none';
   dropzone.style.display = 'flex';
   fileInput.value = '';
